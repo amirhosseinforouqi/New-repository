@@ -8,6 +8,10 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   build: {
+    // Keep optional chaining and other modern syntax intact — lowering `?.`
+    // rewrites `claude.use("mcp")` into an aliased call the publisher's
+    // manifest check can no longer see.
+    target: 'esnext',
     outDir: 'dist-artifact',
     emptyOutDir: true,
     cssCodeSplit: false,

@@ -1,5 +1,10 @@
-import * as XLSX from 'xlsx';
-import { FIRST_NAME_PATTERNS, EMAIL_PATTERNS } from '../config.js';
+import { readXlsx, readCsv } from './xlsxLite.js';
+import {
+  FIRST_NAME_PATTERNS,
+  LAST_NAME_PATTERNS,
+  FULL_NAME_PATTERNS,
+  EMAIL_PATTERNS,
+} from '../config.js';
 
 /** Deliberately permissive but structural: one @, a dot-bearing domain, no spaces. */
 const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[A-Za-z]{2,}$/;
@@ -39,16 +44,11 @@ function findHeaderRow(matrix) {
   return matrix.findIndex((row) => (row || []).some((c) => cell(c) !== ''));
 }
 
-/** Parse an .xlsx/.xls ArrayBuffer into one entry per sheet. */
-export function parseWorkbook(arrayBuffer) {
-  const wb = XLSX.read(arrayBuffer, { type: 'array' });
-  const sheets = wb.SheetNames.map((name) => {
-    const matrix = XLSX.utils.sheet_to_json(wb.Sheets[name], {
-      header: 1,
-      blankrows: false,
-      defval: '',
-      raw: false,
-    });
+/** Parse an .xlsx or .csv ArrayBuffer into one entry per sheet. */
+export function parseWorkbook(arrayBuffer, { csv = false } = {}) {
+  const wb = csv ? readCsv(new TextDecoder().decode(arrayBuffer)) : readXlsx(arrayBuffer);
+  const sheets = wb.sheets.map(({ name, rows: raw }) => {
+    const matrix = raw.filter((row) => (row || []).some((c) => cell(c) !== ''));
     const headerIndex = findHeaderRow(matrix);
     if (headerIndex < 0) return { name, headers: [], rows: [], firstDataRow: 0 };
 
@@ -87,6 +87,8 @@ function sniffEmailColumn(headers, rows) {
  */
 export function detectColumns(headers, rows) {
   const firstNameIndex = matchHeader(headers, FIRST_NAME_PATTERNS);
+  const lastNameIndex = matchHeader(headers, LAST_NAME_PATTERNS);
+  const fullNameIndex = matchHeader(headers, FULL_NAME_PATTERNS);
   let emailIndex = matchHeader(headers, EMAIL_PATTERNS);
   let emailSource = emailIndex >= 0 ? 'header' : 'none';
 
@@ -98,19 +100,54 @@ export function detectColumns(headers, rows) {
     }
   }
 
+  const nameIndex = firstNameIndex >= 0 ? firstNameIndex : fullNameIndex;
+
   return {
     firstNameIndex,
+    lastNameIndex,
+    fullNameIndex,
     emailIndex,
-    firstNameSource: firstNameIndex >= 0 ? 'header' : 'none',
+    /** Whether a full name can be built at all — drives the greeting choice. */
+    hasFullName: (firstNameIndex >= 0 && lastNameIndex >= 0) || fullNameIndex >= 0,
+    nameSource: nameIndex >= 0 ? 'header' : 'none',
+    firstNameSource: nameIndex >= 0 ? 'header' : 'none',
     emailSource,
   };
+}
+
+/**
+ * Work out both greeting forms for one row.
+ * Handles three shapes of list: separate First/Last columns, a single full-name
+ * column, and the "Last, First" ordering CRM exports often produce.
+ */
+function namesFor(row, cols) {
+  const first = cols.firstNameIndex >= 0 ? cell(row[cols.firstNameIndex]) : '';
+  const last = cols.lastNameIndex >= 0 ? cell(row[cols.lastNameIndex]) : '';
+  const full = cols.fullNameIndex >= 0 ? cell(row[cols.fullNameIndex]) : '';
+
+  if (first) {
+    return { firstName: first, fullName: [first, last].filter(Boolean).join(' ') || first };
+  }
+  if (full) {
+    if (full.includes(',')) {
+      const [surname, given] = full.split(',').map((s) => s.trim());
+      const givenFirst = (given || '').split(/\s+/)[0] || '';
+      return {
+        firstName: givenFirst,
+        fullName: [given, surname].filter(Boolean).join(' ') || full,
+      };
+    }
+    return { firstName: full.split(/\s+/)[0] || '', fullName: full };
+  }
+  return { firstName: '', fullName: last };
 }
 
 /**
  * Turn raw rows into the send list. Rows without a usable email are skipped
  * with a reason; repeat addresses are collapsed so nobody is emailed twice.
  */
-export function buildRecipients(rows, firstNameIndex, emailIndex, firstDataRow = 2) {
+export function buildRecipients(rows, cols, firstDataRow = 2) {
+  const emailIndex = cols?.emailIndex ?? -1;
   const recipients = [];
   const skipped = [];
   const seen = new Map();
@@ -118,7 +155,7 @@ export function buildRecipients(rows, firstNameIndex, emailIndex, firstDataRow =
   rows.forEach((row, i) => {
     const rowNumber = firstDataRow + i;
     const rawEmail = emailIndex >= 0 ? cell(row[emailIndex]) : '';
-    const firstName = firstNameIndex >= 0 ? cell(row[firstNameIndex]) : '';
+    const { firstName, fullName } = namesFor(row, cols ?? {});
     const email = normalizeEmail(rawEmail);
 
     if (!email) {
@@ -140,7 +177,7 @@ export function buildRecipients(rows, firstNameIndex, emailIndex, firstDataRow =
       return;
     }
     seen.set(key, rowNumber);
-    recipients.push({ rowNumber, firstName, email });
+    recipients.push({ rowNumber, firstName, fullName, email });
   });
 
   return { recipients, skipped };

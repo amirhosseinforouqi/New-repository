@@ -114,9 +114,9 @@ export function describeMcpError(err) {
  * AbortSignal is passed: aborting a send leaves the outcome unknown, and this
  * is an action that must not double-fire.
  */
-export async function sendOne(mcp, { to, html, text, subject = SUBJECT }) {
+export async function sendOne(mcp, { to, html, text, subject = SUBJECT, server = GMAIL_SERVER }) {
   const result = await mcp.callTool(
-    GMAIL_SERVER,
+    server,
     GMAIL_SEND_TOOL,
     {
       to: [to],

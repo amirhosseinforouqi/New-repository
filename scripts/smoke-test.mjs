@@ -17,7 +17,7 @@ const load = (rows) => {
   const { sheets } = parseWorkbook(sheetFrom(rows));
   const sheet = sheets[0];
   const found = detectColumns(sheet.headers, sheet.rows);
-  const built = buildRecipients(sheet.rows, found.firstNameIndex, found.emailIndex, sheet.firstDataRow);
+  const built = buildRecipients(sheet.rows, found, sheet.firstDataRow);
   return { sheet, found, ...built };
 };
 
@@ -123,6 +123,50 @@ test('substitutes the first name into the template', () => {
 
 test('blank names fall back to a neutral greeting', () => {
   assert.ok(personalize('   ').includes(`Hi ${FALLBACK_FIRST_NAME},`));
+});
+
+test('builds both greeting forms from First + Last columns', () => {
+  const { found, recipients } = load([
+    ['First Name', 'Last Name', 'Email'],
+    ['Sara', 'Ahmadi', 'sara@example.com'],
+  ]);
+  assert.equal(found.hasFullName, true);
+  assert.equal(recipients[0].firstName, 'Sara');
+  assert.equal(recipients[0].fullName, 'Sara Ahmadi');
+});
+
+test('splits a single full-name column into both forms', () => {
+  const { found, recipients } = load([
+    ['Full Name', 'Email'],
+    ['Sara Ahmadi', 'sara@example.com'],
+  ]);
+  assert.equal(found.hasFullName, true);
+  assert.equal(recipients[0].firstName, 'Sara');
+  assert.equal(recipients[0].fullName, 'Sara Ahmadi');
+});
+
+test('unpicks the "Last, First" ordering CRM exports produce', () => {
+  const { recipients } = load([
+    ['Name', 'Email'],
+    ['Ahmadi, Sara', 'sara@example.com'],
+    ['Reid, Tom James', 'tom@example.com'],
+  ]);
+  assert.deepEqual(recipients.map((r) => r.firstName), ['Sara', 'Tom']);
+  assert.deepEqual(recipients.map((r) => r.fullName), ['Sara Ahmadi', 'Tom James Reid']);
+});
+
+test('reports no full name when only a first-name column exists', () => {
+  const { found, recipients } = load([
+    ['First Name', 'Email'],
+    ['Sara', 'sara@example.com'],
+  ]);
+  assert.equal(found.hasFullName, false);
+  assert.equal(recipients[0].fullName, 'Sara');
+});
+
+test('greets with either form', () => {
+  assert.ok(personalize('Sara').includes('Hi Sara,'));
+  assert.ok(personalize('Sara Ahmadi').includes('Hi Sara Ahmadi,'));
 });
 
 console.log(`\n${passed} passed`);

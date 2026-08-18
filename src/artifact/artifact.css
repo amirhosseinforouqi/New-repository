@@ -139,66 +139,6 @@ h1, h2, h3 {
 
 .card__rule { height: 4px; background: var(--accent); }
 
-.masthead {
-  background: var(--header);
-  color: var(--header-ink);
-  padding: 24px 34px 22px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-}
-.masthead h1 {
-  font-size: 25px;
-  letter-spacing: .05em;
-  color: var(--header-ink);
-  font-weight: 600;
-  line-height: 1.1;
-}
-.masthead p {
-  margin: 6px 0 0;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 10.5px;
-  letter-spacing: .16em;
-  color: var(--header-sub);
-}
-.masthead__tool {
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 10.5px;
-  letter-spacing: .18em;
-  color: var(--accent);
-  white-space: nowrap;
-  padding-top: 4px;
-}
-
-.lede {
-  background: var(--header-2);
-  color: var(--header-ink);
-  padding: 34px 34px 36px;
-}
-.lede h2 {
-  color: var(--header-ink);
-  font-size: 27px;
-  line-height: 1.24;
-  max-width: 28ch;
-}
-.lede__eyebrow {
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 10.5px;
-  letter-spacing: .2em;
-  color: var(--accent);
-  padding-bottom: 15px;
-}
-.lede__meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 26px;
-  padding-top: 18px;
-  font-size: 13.5px;
-  color: var(--header-sub);
-}
-.lede__meta b { color: var(--header-ink); font-weight: 500; }
-
 /* --- stage rail ----------------------------------------------------------- */
 
 .rail {
@@ -470,4 +410,66 @@ details[open] summary { padding-bottom: 12px; }
   padding: 22px 34px 24px;
   font-size: 12px;
   line-height: 1.75;
+}
+
+/* --- what was found ------------------------------------------------------- */
+
+.found {
+  border: 1px solid var(--rule);
+  background: var(--surface-2);
+}
+.found__row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  flex-wrap: wrap;
+}
+.found__row + .found__row { border-top: 1px solid var(--rule); }
+.found__k {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: .14em;
+  color: var(--muted);
+  width: 58px;
+  flex: none;
+}
+.found__v { color: var(--ink); font-size: 15px; flex: 1; min-width: 140px; }
+
+/* --- greeting choice ------------------------------------------------------ */
+
+.choices { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 660px) { .choices { grid-template-columns: 1fr; } }
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 15px 17px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.choice:hover:not(:disabled) { background: var(--surface-2); border-color: var(--accent); color: var(--ink); }
+.choice b { font-size: 15.5px; font-weight: 600; }
+.choice small { color: var(--muted); font-size: 13px; font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.choice--on { border-color: var(--accent); background: var(--accent-wash); box-shadow: inset 3px 0 0 var(--accent); }
+.choice--on:hover:not(:disabled) { background: var(--accent-wash); }
+.choice:disabled { opacity: .45; cursor: not-allowed; }
+
+button.big { padding: 15px 30px; font-size: 16px; }
+
+.csv {
+  width: 100%;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  background: var(--surface-2);
+  color: var(--ink);
+  resize: vertical;
 }

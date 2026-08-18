@@ -9,10 +9,12 @@
     "build": "vite build",
     "preview": "vite preview",
     "smoke": "node scripts/smoke-test.mjs",
-    "build:artifact": "vite build --config vite.artifact.config.js && node scripts/build-artifact.mjs"
+    "build:artifact": "vite build --config vite.artifact.config.js && node scripts/build-artifact.mjs",
+    "parity": "node scripts/parser-parity.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",
+    "fflate": "^0.8.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "xlsx": "^0.18.5"

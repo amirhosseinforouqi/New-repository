@@ -16,8 +16,23 @@ export const FALLBACK_FIRST_NAME = 'there';
 /** Above this many recipients, a confirmation screen is required before sending. */
 export const CONFIRM_THRESHOLD = 5;
 
-/** Pause between sends, in ms. Keeps the send gentle on Gmail/API rate limits. */
+/** Pause between sends, in ms. Keeps the send gentle on Gmail's rate limits. */
 export const SEND_DELAY_MS = 750;
+
+/**
+ * Gmail enforces a daily recipient cap — roughly 500/day on a personal
+ * @gmail.com account and 2,000/day on Google Workspace. A run stops cleanly at
+ * this many and can be resumed the next day rather than failing mid-list.
+ */
+export const DAILY_CAP_DEFAULT = 450;
+export const DAILY_CAP_CHOICES = [200, 450, 900, 1800, 0];
+
+/** Rows drawn in a preview table at once. Beyond this a count stands in for the
+ *  rest — a 1,000-row list must not put 1,000 nodes in the document. */
+export const TABLE_WINDOW = 200;
+
+/** Where an interrupted run is kept so it can be resumed without re-sending. */
+export const RESUME_KEY = 'emailblast.run.v1';
 
 /** Brand palette — mirrors the email template so the tool feels like the brand. */
 export const BRAND = {
@@ -50,6 +65,23 @@ export const FIRST_NAME_PATTERNS = [
   /first[\s._-]*name/i,
   /given[\s._-]*name/i,
   /^first$/i,
+];
+
+export const LAST_NAME_PATTERNS = [
+  /^last[\s._-]*name$/i,
+  /^(?:client|customer|contact)[\s._-]*last[\s._-]*name$/i,
+  /^l[\s._-]*name$/i,
+  /^lname$/i,
+  /^surname$/i,
+  /^family[\s._-]*name$/i,
+  /last[\s._-]*name/i,
+  /^last$/i,
+];
+
+export const FULL_NAME_PATTERNS = [
+  /^full[\s._-]*name$/i,
+  /^(?:client|customer|contact)[\s._-]*name$/i,
+  /^display[\s._-]*name$/i,
   /^name$/i,
 ];
 

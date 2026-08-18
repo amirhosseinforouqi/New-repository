@@ -69,8 +69,8 @@ export default function EmailBlast() {
 
   const { recipients, skipped } = useMemo(() => {
     if (!sheet) return { recipients: [], skipped: [] };
-    return buildRecipients(sheet.rows, firstNameIndex, emailIndex, sheet.firstDataRow);
-  }, [sheet, firstNameIndex, emailIndex]);
+    return buildRecipients(sheet.rows, { ...detection, firstNameIndex, emailIndex }, sheet.firstDataRow);
+  }, [sheet, detection, firstNameIndex, emailIndex]);
 
   const applyDetection = useCallback((target) => {
     const found = detectColumns(target.headers, target.rows);
