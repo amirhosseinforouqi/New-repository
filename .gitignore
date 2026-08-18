@@ -8,3 +8,5 @@ dist/
 *.xlsx
 *.xls
 *.csv
+
+dist-artifact/

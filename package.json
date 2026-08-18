@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "smoke": "node scripts/smoke-test.mjs"
+    "smoke": "node scripts/smoke-test.mjs",
+    "build:artifact": "vite build --config vite.artifact.config.js && node scripts/build-artifact.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",
