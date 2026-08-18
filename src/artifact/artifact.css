@@ -528,3 +528,5 @@ input[type="text"]:focus { outline: 2px solid var(--focus); outline-offset: -1px
 input[type="text"][aria-invalid="true"] { border-color: var(--bad); background: var(--bad-wash); }
 
 .field__label .link { margin-left: auto; font-size: 11px; letter-spacing: 0; }
+
+.pill[data-s="waiting"] { color: var(--warn); border-color: var(--warn-rule); background: var(--warn-wash); }

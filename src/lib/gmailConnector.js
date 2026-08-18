@@ -66,10 +66,20 @@ export function describeMcpError(err) {
     case 'rate_limited':
       return {
         code,
-        title: 'Sending too quickly',
-        fix: 'Wait a moment, then send the remaining recipients.',
+        title: 'Gmail is throttling this account',
+        fix: 'Gmail would not accept more mail just now. Nothing was sent to this person.',
       };
     case 'tool_error':
+      if (isQuotaError(err)) {
+        return {
+          code,
+          quota: true,
+          title: isDailyQuotaError(err) ? "Gmail's daily sending limit is used up" : 'Gmail is throttling this account',
+          fix: isDailyQuotaError(err)
+            ? 'Gmail caps how much one account can send per day — about 500 on a personal @gmail.com address, 2,000 on Workspace. Nothing was sent to this person. The limit resets in 24 hours; resume then.'
+            : 'Gmail refused to take more mail this quickly. Nothing was sent to this person.',
+        };
+      }
       return {
         code,
         title: 'Gmail rejected the message',
@@ -192,4 +202,26 @@ export async function resolveSenderAddress(mcp, { server = GMAIL_SERVER, message
   } catch {
     return null;
   }
+}
+
+/**
+ * Was this rejection Gmail refusing on quota or rate?
+ *
+ * Google reports both its per-second rate cap and its daily sending cap as
+ * RESOURCE_EXHAUSTED ("Resource has been exhausted (e.g. check quota)"), which
+ * arrives here as a tool_error. The connector's own throttle arrives as
+ * rate_limited. Both mean Gmail refused the message before accepting it, so
+ * nothing was delivered and re-sending cannot duplicate anything.
+ */
+export function isQuotaError(err) {
+  if (err?.code === 'rate_limited') return true;
+  if (err?.code !== 'tool_error') return false;
+  const text = `${err?.message ?? ''} ${JSON.stringify(err?.data ?? '')}`;
+  return /resource has been exhausted|resource_exhausted|quota|rate limit|rateLimitExceeded|userRateLimitExceeded|too many requests|\b429\b/i.test(text);
+}
+
+/** Tell a daily-cap refusal apart from a slow-down. Daily says so explicitly. */
+export function isDailyQuotaError(err) {
+  const text = `${err?.message ?? ''} ${JSON.stringify(err?.data ?? '')}`;
+  return /daily|per day|sending quota|limit for sending|exceeded.*quota for/i.test(text);
 }

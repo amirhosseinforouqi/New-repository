@@ -25,6 +25,18 @@ export const SEND_DELAY_MS = 750;
  * this many and can be resumed the next day rather than failing mid-list.
  */
 export const DAILY_CAP_DEFAULT = 450;
+
+/**
+ * How long to wait out a Gmail throttle before trying the same recipient
+ * again. Widening pauses; after the last one the recipient is marked failed.
+ */
+export const QUOTA_BACKOFF_MS = [5000, 20000, 60000];
+
+/** Consecutive recipients that may exhaust their retries before the run stops. */
+export const QUOTA_GIVE_UP = 3;
+
+/** Ceiling for the self-slowing pace, in ms between sends. */
+export const MAX_PACE_MS = 8000;
 export const DAILY_CAP_CHOICES = [200, 450, 900, 1800, 0];
 
 /** Rows drawn in a preview table at once. Beyond this a count stands in for the

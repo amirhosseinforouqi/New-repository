@@ -6,6 +6,8 @@ import {
   sendOne,
   describeMcpError,
   isAmbiguous,
+  isQuotaError,
+  isDailyQuotaError,
   resolveSenderAddress,
   GMAIL_SEND_TOOL,
 } from '../lib/gmailConnector.js';
@@ -14,6 +16,9 @@ import {
   SEND_DELAY_MS,
   DAILY_CAP_DEFAULT,
   DAILY_CAP_CHOICES,
+  QUOTA_BACKOFF_MS,
+  QUOTA_GIVE_UP,
+  MAX_PACE_MS,
   TABLE_WINDOW,
   RESUME_KEY,
   SUBJECT_KEY,
@@ -121,7 +126,7 @@ export default function EmailBlastArtifact() {
     })();
     try {
       const saved = JSON.parse(window.localStorage.getItem(RESUME_KEY) || 'null');
-      if (saved?.log?.some((r) => r.status === 'pending' || r.status === 'stopped')) setResumable(saved);
+      if (saved?.log?.some((r) => ['pending', 'stopped', 'waiting', 'sending'].includes(r.status))) setResumable(saved);
     } catch { /* nothing usable stored */ }
     return () => { live = false; };
   }, []);
@@ -206,6 +211,10 @@ export default function EmailBlastArtifact() {
     let done = 0;
     let stoppedEarly = null;
     let learnedAddress = false;
+    let quotaStreak = 0;
+    let pace = Number.isFinite(window.__sendDelayMs) ? window.__sendDelayMs : SEND_DELAY_MS;
+    // A test harness may shorten the throttle waits; production uses the config.
+    const backoff = Array.isArray(window.__quotaBackoff) ? window.__quotaBackoff : QUOTA_BACKOFF_MS;
 
     for (let k = 0; k < indices.length; k++) {
       const i = indices[k];
@@ -216,43 +225,78 @@ export default function EmailBlastArtifact() {
       patch(i, { status: 'sending' });
       const row = logRef.current[i];
 
-      try {
-        const sent = await sendOne(mcp, {
-          server: fromServer,
-          to: row.email,
-          subject,
-          html: personalize(greetingOf(row, greeting)),
-          text: personalize(greetingOf(row, greeting), EMAIL_TEMPLATE_TEXT),
-        });
-        patch(i, { status: 'sent', detail: null, code: null });
-        // The connector has no "who am I" lookup, so the sending address is
-        // read off the first message that actually went out, then remembered.
-        if (!learnedAddress && !addresses[fromServer] && sent?.messageId) {
-          learnedAddress = true;
-          resolveSenderAddress(mcp, { server: fromServer, messageId: sent.messageId })
-            .then((addr) => { if (addr) setAddresses((prev) => ({ ...prev, [fromServer]: addr })); });
+      // Gmail refuses on quota before it accepts anything, so nothing was
+      // delivered and waiting it out cannot duplicate a message. Give the same
+      // recipient a few widening pauses before calling it a failure.
+      let attempt = 0;
+      for (;;) {
+        try {
+          const sent = await sendOne(mcp, {
+            server: fromServer,
+            to: row.email,
+            subject,
+            html: personalize(greetingOf(row, greeting)),
+            text: personalize(greetingOf(row, greeting), EMAIL_TEMPLATE_TEXT),
+          });
+          patch(i, { status: 'sent', detail: null, code: null });
+          quotaStreak = 0;
+          // The connector has no "who am I" lookup, so the sending address is
+          // read off the first message that actually went out, then remembered.
+          if (!learnedAddress && !addresses[fromServer] && sent?.messageId) {
+            learnedAddress = true;
+            resolveSenderAddress(mcp, { server: fromServer, messageId: sent.messageId })
+              .then((addr) => { if (addr) setAddresses((prev) => ({ ...prev, [fromServer]: addr })); });
+          }
+          break;
+        } catch (e) {
+          const d = describeMcpError(e);
+
+          if (isQuotaError(e) && !isDailyQuotaError(e) && attempt < backoff.length && !stopRef.current) {
+            const wait = backoff[attempt];
+            attempt++;
+            // Every later send slows down too, or the next one just hits it again.
+            pace = Math.min(Math.max(pace * 2, 2000), MAX_PACE_MS);
+            setRunInfo((p) => ({ ...p, throttledUntil: Date.now() + wait, pace }));
+            patch(i, { status: 'waiting', detail: `Gmail is throttling — waiting ${Math.round(wait / 1000)}s, then trying again.` });
+            await sleep(wait);
+            if (stopRef.current) { patch(i, { status: 'stopped', detail: null }); break; }
+            patch(i, { status: 'sending' });
+            continue;
+          }
+
+          patch(i, { status: isAmbiguous(d.code) ? 'uncertain' : 'failed', detail: d.fix, code: d.code });
+
+          if (isQuotaError(e)) {
+            quotaStreak++;
+            // A day's allowance does not come back in a minute. Once several
+            // recipients in a row exhaust their retries, stop rather than
+            // marking the rest of the list failed for the same reason.
+            if (isDailyQuotaError(e) || quotaStreak >= QUOTA_GIVE_UP) {
+              setHalted({ ...d, quota: true });
+              stoppedEarly = 'quota';
+            }
+          }
+          if (FATAL.has(d.code)) { setHalted(d); stoppedEarly = 'fatal'; }
+          break;
         }
-      } catch (e) {
-        const d = describeMcpError(e);
-        patch(i, { status: isAmbiguous(d.code) ? 'uncertain' : 'failed', detail: d.fix, code: d.code });
-        if (FATAL.has(d.code)) { setHalted(d); stoppedEarly = 'fatal'; break; }
       }
+      if (stoppedEarly === 'fatal' || stoppedEarly === 'quota') break;
 
       done++;
       const elapsed = Date.now() - startedAt;
       setRunInfo((p) => ({ ...p, done, etaMs: (elapsed / done) * (cap - done) }));
       if (done % 5 === 0) persist(logRef.current);
-      // Pacing keeps the run gentle on Gmail's rate limit. A test harness may
-      // shorten it via window.__sendDelayMs; production always uses the config.
-      const delay = Number.isFinite(window.__sendDelayMs) ? window.__sendDelayMs : SEND_DELAY_MS;
-      if (k < indices.length - 1 && delay > 0) await sleep(delay);
+      // Pacing keeps the run gentle on Gmail's rate limit, and widens itself
+      // whenever Gmail pushes back. A test harness may shorten the starting
+      // value via window.__sendDelayMs; production starts from the config.
+      if (k < indices.length - 1 && pace > 0) await sleep(pace);
     }
 
     setLog((prev) => {
-      const out = prev.map((r) => (r.status === 'sending' || r.status === 'pending' ? { ...r, status: 'stopped' } : r));
+      const out = prev.map((r) => (['sending', 'waiting', 'pending'].includes(r.status) ? { ...r, status: 'stopped' } : r));
       logRef.current = out; persist(out); return out;
     });
-    setRunInfo((p) => ({ ...p, done, capped: stoppedEarly === 'cap', stopped: stoppedEarly }));
+    setRunInfo((p) => ({ ...p, done, capped: stoppedEarly === 'cap', stopped: stoppedEarly, throttledUntil: null }));
     setStage('results');
   }, [dailyCap, fromServer, greeting, subject, addresses, persist]);
 
@@ -273,7 +317,7 @@ export default function EmailBlastArtifact() {
     if (resumable.greeting) setGreeting(resumable.greeting);
     if (resumable.subject) setSubject(resumable.subject);
     setResumable(null);
-    const idx = resumable.log.map((r, i) => (r.status === 'pending' || r.status === 'stopped' ? i : -1)).filter((i) => i >= 0);
+    const idx = resumable.log.map((r, i) => (['pending', 'stopped', 'waiting', 'sending'].includes(r.status) ? i : -1)).filter((i) => i >= 0);
     runQueue(idx);
   };
 
@@ -377,7 +421,7 @@ export default function EmailBlastArtifact() {
               <b>An unfinished run is saved on this device</b>
               <small>
                 {nf.format(resumable.log.filter((r) => r.status === 'sent').length)} already sent,{' '}
-                {nf.format(resumable.log.filter((r) => r.status === 'pending' || r.status === 'stopped').length)} still to go
+                {nf.format(resumable.log.filter((r) => ['pending', 'stopped', 'waiting', 'sending'].includes(r.status)).length)} still to go
                 {resumable.fileName ? ` from ${resumable.fileName}` : ''}. Resuming skips everyone already contacted.
               </small>
               <div className="actions" style={{ paddingTop: 6 }}>
@@ -890,7 +934,7 @@ function ReadyStage(props) {
   );
 }
 
-const PILL = { sent: 'SENT', failed: 'FAILED', uncertain: 'CHECK SENT', sending: 'SENDING', pending: 'WAITING', stopped: 'NOT SENT' };
+const PILL = { sent: 'SENT', failed: 'FAILED', uncertain: 'CHECK SENT', sending: 'SENDING', waiting: 'THROTTLED', pending: 'WAITING', stopped: 'NOT SENT' };
 
 function SendingStage({ log, cursor, runInfo, onStop }) {
   const planned = runInfo?.planned ?? log.length;
@@ -915,6 +959,17 @@ function SendingStage({ log, cursor, runInfo, onStop }) {
         {now && now.status !== 'stopped' ? `Sending to ${now.email}…` : 'Wrapping up…'}
         {runInfo?.etaMs ? ` · about ${humanDuration(runInfo.etaMs)} left` : ''}
       </p>
+
+      {log.some((r) => r.status === 'waiting') && (
+        <div className="notice" data-tone="warn">
+          <b>Gmail is throttling — waiting, then carrying on</b>
+          <small>
+            Gmail would not take another message this quickly. Nothing was sent to this
+            person yet. The run pauses, slows down, and picks up where it left off; leave
+            the page open.
+          </small>
+        </div>
+      )}
 
       <div className="scroll">
         <table>
@@ -974,9 +1029,16 @@ function ResultsStage(props) {
       )}
 
       {halted && (
-        <div className="notice" data-tone="bad">
+        <div className="notice" data-tone={halted.quota ? 'warn' : 'bad'}>
           <b>Stopped — {halted.title}</b>
-          <small>{halted.fix} The remaining clients were not contacted.</small>
+          <small>{halted.fix} The remaining {nf.format(counts.stopped)} were not contacted.</small>
+          {halted.quota && (
+            <small>
+              Nothing here was half-sent: Gmail turns a message away before accepting it,
+              so everyone still listed as not sent simply has not been emailed. Come back
+              once the limit resets and press “Send the remaining”.
+            </small>
+          )}
         </div>
       )}
 
