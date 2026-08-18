@@ -10,6 +10,7 @@ import {
   DAILY_CAP_CHOICES,
   TABLE_WINDOW,
   RESUME_KEY,
+  SUBJECT_KEY,
 } from '../config.js';
 
 const RAIL = [
@@ -68,6 +69,10 @@ export default function EmailBlastArtifact() {
   const [halted, setHalted] = useState(null);
   const [resumable, setResumable] = useState(null);
   const [copied, setCopied] = useState(null);
+  const [subject, setSubject] = useState(() => {
+    try { return window.localStorage.getItem(SUBJECT_KEY) || SUBJECT; } catch { return SUBJECT; }
+  });
+  const [showAddAccount, setShowAddAccount] = useState(false);
   const stopRef = useRef(false);
   const logRef = useRef([]);
   logRef.current = log;
@@ -106,6 +111,10 @@ export default function EmailBlastArtifact() {
     } catch { /* nothing usable stored */ }
     return () => { live = false; };
   }, []);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(SUBJECT_KEY, subject); } catch { /* private mode */ }
+  }, [subject]);
 
   const sheet = sheets[sheetIndex];
 
@@ -154,10 +163,10 @@ export default function EmailBlastArtifact() {
   const persist = useCallback((rows) => {
     try {
       window.localStorage.setItem(RESUME_KEY, JSON.stringify({
-        savedAt: Date.now(), fileName, fromServer, greeting, log: rows,
+        savedAt: Date.now(), fileName, fromServer, greeting, subject, log: rows,
       }));
     } catch { /* quota or private mode — the run still works, it just can't resume */ }
-  }, [fileName, fromServer, greeting]);
+  }, [fileName, fromServer, greeting, subject]);
 
   // --- the send loop -------------------------------------------------------
   const runQueue = useCallback(async (indices) => {
@@ -192,6 +201,7 @@ export default function EmailBlastArtifact() {
         await sendOne(mcp, {
           server: fromServer,
           to: row.email,
+          subject,
           html: personalize(greetingOf(row, greeting)),
           text: personalize(greetingOf(row, greeting), EMAIL_TEMPLATE_TEXT),
         });
@@ -218,7 +228,7 @@ export default function EmailBlastArtifact() {
     });
     setRunInfo((p) => ({ ...p, done, capped: stoppedEarly === 'cap', stopped: stoppedEarly }));
     setStage('results');
-  }, [dailyCap, fromServer, greeting, persist]);
+  }, [dailyCap, fromServer, greeting, subject, persist]);
 
   const beginRun = () => {
     const rows = recipients.map((r) => ({ ...r, status: 'pending', detail: null, code: null }));
@@ -235,6 +245,7 @@ export default function EmailBlastArtifact() {
     setLog(resumable.log); logRef.current = resumable.log;
     setFileName(resumable.fileName || '');
     if (resumable.greeting) setGreeting(resumable.greeting);
+    if (resumable.subject) setSubject(resumable.subject);
     setResumable(null);
     const idx = resumable.log.map((r, i) => (r.status === 'pending' || r.status === 'stopped' ? i : -1)).filter((i) => i >= 0);
     runQueue(idx);
@@ -245,7 +256,7 @@ export default function EmailBlastArtifact() {
     setResumable(null);
   };
 
-  const canSend = conn.status === 'ready' && !!fromServer;
+  const canSend = conn.status === 'ready' && !!fromServer && subject.trim() !== '';
 
   const counts = useMemo(() => {
     const by = (s) => log.filter((r) => r.status === s).length;
@@ -295,7 +306,30 @@ export default function EmailBlastArtifact() {
       <div className="card">
         <div className="card__rule" />
 
+        <header className="brand">
+          <span className="brand__mark" aria-hidden="true">
+            <svg viewBox="0 0 34 26" width="30" height="23" fill="none" stroke="currentColor"
+                 strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="0.8" y="3.8" width="21.4" height="16.4" />
+              <polyline points="0.8,3.8 11.5,12.6 22.2,3.8" />
+              <line x1="25.5" y1="8" x2="33" y2="8" />
+              <line x1="25.5" y1="12.5" x2="30" y2="12.5" />
+              <line x1="25.5" y1="17" x2="33" y2="17" />
+            </svg>
+          </span>
+          <span className="brand__text">
+            <span className="brand__name">MAIL RUNNER</span>
+            <span className="brand__sub">BULK EMAIL SENDER</span>
+          </span>
+        </header>
+
         <ConnectorStrip conn={conn} />
+
+        <CampaignBar
+          accounts={accounts} fromServer={fromServer} setFromServer={setFromServer}
+          subject={subject} setSubject={setSubject}
+          showAddAccount={showAddAccount} setShowAddAccount={setShowAddAccount}
+        />
 
         <ul className="rail">
           {RAIL.map(([id, label], i) => (
@@ -344,7 +378,7 @@ export default function EmailBlastArtifact() {
 
         {stage === 'confirm' && (
           <ConfirmStage
-            recipients={recipients} greeting={greeting} skipped={skipped}
+            recipients={recipients} greeting={greeting} skipped={skipped} subject={subject}
             onBack={() => setStage('review')} onConfirm={() => setStage('ready')}
           />
         )}
@@ -352,7 +386,7 @@ export default function EmailBlastArtifact() {
         {stage === 'ready' && (
           <ReadyStage
             recipients={recipients} greeting={greeting} canSend={canSend}
-            accounts={accounts} fromServer={fromServer} setFromServer={setFromServer}
+            fromServer={fromServer} subject={subject}
             dailyCap={dailyCap} setDailyCap={setDailyCap}
             onSend={beginRun} onBack={() => setStage('confirm')}
           />
@@ -397,6 +431,81 @@ function ConnectorStrip({ conn }) {
   return (
     <div className="conn" data-tone={tone}>
       <span className="conn__dot" /><b>{title}</b>{detail && <span>{detail}</span>}
+    </div>
+  );
+}
+
+/**
+ * The two settings that apply to every message in a run, kept at the top of the
+ * page rather than buried in a later step: which mailbox sends, and what the
+ * subject line says. A page cannot add a connector itself — that is an account
+ * action on claude.ai — so "Add an account" explains where to do it.
+ */
+function CampaignBar({ accounts, fromServer, setFromServer, subject, setSubject, showAddAccount, setShowAddAccount }) {
+  const empty = subject.trim() === '';
+  return (
+    <div className="campaign">
+      <div className="campaign__fields">
+        <label className="field">
+          <span className="field__label">
+            SEND FROM
+            <button className="link" type="button" onClick={() => setShowAddAccount((v) => !v)}>
+              {showAddAccount ? 'close' : 'add an account'}
+            </button>
+          </span>
+          <select
+            value={fromServer}
+            onChange={(e) => setFromServer(e.target.value)}
+            disabled={accounts.length === 0}
+          >
+            {accounts.length === 0 && <option value="">no account connected</option>}
+            {accounts.map((a) => (
+              <option key={a.server} value={a.server}>
+                {a.server}{a.authStatus === 'needs_reauth' ? ' — needs reconnecting' : ''}
+              </option>
+            ))}
+          </select>
+          <span className="field__hint">
+            {accounts.length > 1
+              ? `${accounts.length} accounts available.`
+              : accounts.length === 1
+                ? 'The only mailbox connected to this page.'
+                : 'None connected yet.'}
+          </span>
+        </label>
+
+        <label className="field">
+          <span className="field__label">SUBJECT</span>
+          <input
+            type="text"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="Subject line for every message"
+            aria-invalid={empty}
+          />
+          <span className="field__hint">
+            {empty ? 'Every message needs a subject.' : 'Used for every message in the run.'}
+          </span>
+        </label>
+      </div>
+
+      {showAddAccount && (
+        <div className="notice">
+          <b>Adding another mailbox</b>
+          <small>
+            1 — Open claude.ai and go to Settings → Connectors.
+            <br />
+            2 — Connect the Google account you want to send from.
+            <br />
+            3 — Reload this page; it will appear in the list above.
+          </small>
+          <small>
+            A newly connected mailbox also has to be allowed for this page. If it does not
+            show up after reloading, ask Claude to republish the page with that connector
+            included.
+          </small>
+        </div>
+      )}
     </div>
   );
 }
@@ -620,7 +729,7 @@ function ReviewStage(props) {
   );
 }
 
-function ConfirmStage({ recipients, greeting, skipped, onBack, onConfirm }) {
+function ConfirmStage({ recipients, greeting, skipped, subject, onBack, onConfirm }) {
   return (
     <section className="section">
       <div className="section__head">
@@ -642,7 +751,7 @@ function ConfirmStage({ recipients, greeting, skipped, onBack, onConfirm }) {
       </div>
 
       <div className="notice">
-        <b>Subject — {SUBJECT}</b>
+        <b>Subject — {subject}</b>
         <small>
           Greeting: {greeting === 'full' ? 'full name' : 'first name'} · First:{' '}
           {recipients[0]?.email} · Last: {recipients[recipients.length - 1]?.email}
@@ -658,7 +767,7 @@ function ConfirmStage({ recipients, greeting, skipped, onBack, onConfirm }) {
 }
 
 function ReadyStage(props) {
-  const { recipients, greeting, canSend, accounts, fromServer, setFromServer, dailyCap, setDailyCap, onSend, onBack } = props;
+  const { recipients, greeting, canSend, fromServer, subject, dailyCap, setDailyCap, onSend, onBack } = props;
   const planned = dailyCap > 0 ? Math.min(dailyCap, recipients.length) : recipients.length;
   const leftover = recipients.length - planned;
   const eta = planned * (SEND_DELAY_MS + 1500);
@@ -674,22 +783,18 @@ function ReadyStage(props) {
         </p>
       </div>
 
-      <div className="grid2">
-        <label className="field">
-          <span className="field__label">SEND FROM</span>
-          <select value={fromServer} onChange={(e) => setFromServer(e.target.value)} disabled={accounts.length <= 1}>
-            {accounts.length === 0 && <option value="">no account connected</option>}
-            {accounts.map((a) => (
-              <option key={a.server} value={a.server}>
-                {a.server}{a.authStatus === 'needs_reauth' ? ' — needs reconnecting' : ''}
-              </option>
-            ))}
-          </select>
-          <span className="field__hint">
-            To send from another mailbox, add it in claude.ai Settings → Connectors.
-          </span>
-        </label>
+      <div className="found">
+        <div className="found__row">
+          <span className="found__k">FROM</span>
+          <span className="found__v">{fromServer || 'no account connected'}</span>
+        </div>
+        <div className="found__row">
+          <span className="found__k">SUBJECT</span>
+          <span className="found__v">{subject}</span>
+        </div>
+      </div>
 
+      <div className="grid2">
         <label className="field">
           <span className="field__label">STOP AFTER</span>
           <select value={dailyCap} onChange={(e) => setDailyCap(Number(e.target.value))}>

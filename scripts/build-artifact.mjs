@@ -9,7 +9,7 @@ const css = readFileSync('dist-artifact/bundle.css', 'utf8');
 // A literal </script> anywhere in the bundle would close the tag early.
 const safeJs = js.replace(/<\/script/gi, '<\\/script');
 
-const page = `<title>Email Blast</title>
+const page = `<title>Mail Runner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">

@@ -473,3 +473,58 @@ button.big { padding: 15px 30px; font-size: 16px; }
   color: var(--ink);
   resize: vertical;
 }
+
+/* --- brand header --------------------------------------------------------- */
+
+.brand {
+  background: var(--header);
+  color: var(--header-ink);
+  padding: 20px 34px 19px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+.brand__mark { color: var(--accent); display: flex; flex: none; }
+.brand__text { display: flex; flex-direction: column; gap: 5px; }
+.brand__name {
+  font-family: Archivo, Helvetica, Arial, sans-serif;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: .16em;
+  line-height: 1;
+  color: var(--header-ink);
+}
+.brand__sub {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: .2em;
+  line-height: 1;
+  color: var(--header-sub);
+}
+
+/* --- run-wide settings ---------------------------------------------------- */
+
+.campaign {
+  padding: 18px 34px 20px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.campaign__fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 20px; }
+@media (max-width: 660px) { .campaign__fields { grid-template-columns: 1fr; } }
+
+input[type="text"] {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14.5px;
+}
+input[type="text"]:focus { outline: 2px solid var(--focus); outline-offset: -1px; }
+input[type="text"][aria-invalid="true"] { border-color: var(--bad); background: var(--bad-wash); }
+
+.field__label .link { margin-left: auto; font-size: 11px; letter-spacing: 0; }
