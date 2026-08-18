@@ -130,3 +130,66 @@ export async function sendOne(mcp, { to, html, text, subject = SUBJECT, server =
   const id = result?.payload?.id;
   return { messageId: typeof id === 'string' ? id : null };
 }
+
+export const GMAIL_GET_TOOL = 'get_message';
+
+/** Pull the first plausible address out of whatever shape the reply takes. */
+function findAddress(value, depth = 0) {
+  if (value == null || depth > 4) return null;
+  if (typeof value === 'string') {
+    const angled = /<([^\s@<>]+@[^\s@<>]+\.[A-Za-z]{2,})>/.exec(value);
+    if (angled) return angled[1];
+    const bare = /[^\s@<>",;:]+@[^\s@<>",;:]+\.[A-Za-z]{2,}/.exec(value);
+    return bare ? bare[0] : null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const hit = findAddress(item, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (typeof value === 'object') {
+    // A `{name, value}` pair is one header. Answer only for From, so a
+    // header list never yields the recipient's address by arriving first.
+    if (typeof value.name === 'string' && 'value' in value) {
+      return /^from$/i.test(value.name.trim()) ? findAddress(value.value, depth + 1) : null;
+    }
+    // Prefer anything explicitly labelled "from" before falling back to a scan.
+    for (const key of Object.keys(value)) {
+      if (/^from$/i.test(key)) {
+        const hit = findAddress(value[key], depth + 1);
+        if (hit) return hit;
+      }
+    }
+    for (const key of Object.keys(value)) {
+      if (/^(to|cc|bcc|recipient|reply|delivered)/i.test(key)) continue; // never a sender
+      const hit = findAddress(value[key], depth + 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+/**
+ * Read back the address a just-sent message went out as.
+ *
+ * The Gmail connector exposes no "who am I" lookup, so the only authoritative
+ * source for the sending address is the From header of a message the account
+ * has actually sent. Best-effort by design: a failure here must never affect
+ * the send that already succeeded, so this resolves null instead of throwing.
+ */
+export async function resolveSenderAddress(mcp, { server = GMAIL_SERVER, messageId }) {
+  if (!messageId) return null;
+  try {
+    const result = await mcp.callTool(
+      server,
+      GMAIL_GET_TOOL,
+      { messageId, messageFormat: 'MINIMAL' },
+      { cache: true },
+    );
+    return findAddress(result?.payload) || findAddress(result?.content) || null;
+  } catch {
+    return null;
+  }
+}

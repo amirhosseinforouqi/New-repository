@@ -2,7 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { parseWorkbook, detectColumns, buildRecipients } from '../lib/excel.js';
 import { personalize } from '../lib/personalize.js';
 import { EMAIL_TEMPLATE_TEXT } from '../emailTemplateText.js';
-import { sendOne, describeMcpError, isAmbiguous, GMAIL_SEND_TOOL } from '../lib/gmailConnector.js';
+import {
+  sendOne,
+  describeMcpError,
+  isAmbiguous,
+  resolveSenderAddress,
+  GMAIL_SEND_TOOL,
+} from '../lib/gmailConnector.js';
 import {
   SUBJECT,
   SEND_DELAY_MS,
@@ -11,6 +17,7 @@ import {
   TABLE_WINDOW,
   RESUME_KEY,
   SUBJECT_KEY,
+  ADDRESS_KEY,
 } from '../config.js';
 
 const RAIL = [
@@ -33,6 +40,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const nf = new Intl.NumberFormat();
 
 const greetingOf = (r, mode) => (mode === 'full' ? r.fullName || r.firstName : r.firstName);
+
+/** Name an account by the address it sends from once that is known, since the
+ *  connector's display name ("Gmail") does not say which mailbox it is. */
+const accountLabel = (server, addresses) => (server ? addresses?.[server] || server : '');
 
 function humanDuration(ms) {
   if (!isFinite(ms) || ms <= 0) return '—';
@@ -73,6 +84,9 @@ export default function EmailBlastArtifact() {
     try { return window.localStorage.getItem(SUBJECT_KEY) || SUBJECT; } catch { return SUBJECT; }
   });
   const [showAddAccount, setShowAddAccount] = useState(false);
+  const [addresses, setAddresses] = useState(() => {
+    try { return JSON.parse(window.localStorage.getItem(ADDRESS_KEY) || '{}'); } catch { return {}; }
+  });
   const stopRef = useRef(false);
   const logRef = useRef([]);
   logRef.current = log;
@@ -115,6 +129,10 @@ export default function EmailBlastArtifact() {
   useEffect(() => {
     try { window.localStorage.setItem(SUBJECT_KEY, subject); } catch { /* private mode */ }
   }, [subject]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(ADDRESS_KEY, JSON.stringify(addresses)); } catch { /* private mode */ }
+  }, [addresses]);
 
   const sheet = sheets[sheetIndex];
 
@@ -187,6 +205,7 @@ export default function EmailBlastArtifact() {
 
     let done = 0;
     let stoppedEarly = null;
+    let learnedAddress = false;
 
     for (let k = 0; k < indices.length; k++) {
       const i = indices[k];
@@ -198,7 +217,7 @@ export default function EmailBlastArtifact() {
       const row = logRef.current[i];
 
       try {
-        await sendOne(mcp, {
+        const sent = await sendOne(mcp, {
           server: fromServer,
           to: row.email,
           subject,
@@ -206,6 +225,13 @@ export default function EmailBlastArtifact() {
           text: personalize(greetingOf(row, greeting), EMAIL_TEMPLATE_TEXT),
         });
         patch(i, { status: 'sent', detail: null, code: null });
+        // The connector has no "who am I" lookup, so the sending address is
+        // read off the first message that actually went out, then remembered.
+        if (!learnedAddress && !addresses[fromServer] && sent?.messageId) {
+          learnedAddress = true;
+          resolveSenderAddress(mcp, { server: fromServer, messageId: sent.messageId })
+            .then((addr) => { if (addr) setAddresses((prev) => ({ ...prev, [fromServer]: addr })); });
+        }
       } catch (e) {
         const d = describeMcpError(e);
         patch(i, { status: isAmbiguous(d.code) ? 'uncertain' : 'failed', detail: d.fix, code: d.code });
@@ -228,7 +254,7 @@ export default function EmailBlastArtifact() {
     });
     setRunInfo((p) => ({ ...p, done, capped: stoppedEarly === 'cap', stopped: stoppedEarly }));
     setStage('results');
-  }, [dailyCap, fromServer, greeting, subject, persist]);
+  }, [dailyCap, fromServer, greeting, subject, addresses, persist]);
 
   const beginRun = () => {
     const rows = recipients.map((r) => ({ ...r, status: 'pending', detail: null, code: null }));
@@ -323,11 +349,11 @@ export default function EmailBlastArtifact() {
           </span>
         </header>
 
-        <ConnectorStrip conn={conn} />
+        <ConnectorStrip conn={conn} address={addresses[fromServer]} />
 
         <CampaignBar
           accounts={accounts} fromServer={fromServer} setFromServer={setFromServer}
-          subject={subject} setSubject={setSubject}
+          addresses={addresses} subject={subject} setSubject={setSubject}
           showAddAccount={showAddAccount} setShowAddAccount={setShowAddAccount}
         />
 
@@ -386,7 +412,7 @@ export default function EmailBlastArtifact() {
         {stage === 'ready' && (
           <ReadyStage
             recipients={recipients} greeting={greeting} canSend={canSend}
-            fromServer={fromServer} subject={subject}
+            fromServer={fromServer} subject={subject} addresses={addresses}
             dailyCap={dailyCap} setDailyCap={setDailyCap}
             onSend={beginRun} onBack={() => setStage('confirm')}
           />
@@ -418,10 +444,12 @@ export default function EmailBlastArtifact() {
 
 /* -------------------------------------------------------------------------- */
 
-function ConnectorStrip({ conn }) {
+function ConnectorStrip({ conn, address }) {
   const map = {
     checking: ['wait', 'Checking your Gmail connection…', null],
-    ready: ['ok', 'Gmail is connected.', 'Messages will be sent from your own account.'],
+    ready: address
+      ? ['ok', `Sending as ${address}`, 'Connected to your own Gmail account.']
+      : ['ok', 'Gmail is connected.', 'Messages will be sent from your own account.'],
     reauth: ['bad', 'Gmail needs reconnecting.', 'Reconnect Gmail in claude.ai Settings → Connectors, then reload this page.'],
     missing: ['bad', 'Gmail is not connected.', 'Add the Gmail connector in claude.ai Settings → Connectors, then reload this page.'],
     unavailable: ['bad', 'Sending is unavailable here.', 'Open this page from claude.ai — a direct link cannot reach your connectors. You can still check a list and preview the email.'],
@@ -441,8 +469,9 @@ function ConnectorStrip({ conn }) {
  * subject line says. A page cannot add a connector itself — that is an account
  * action on claude.ai — so "Add an account" explains where to do it.
  */
-function CampaignBar({ accounts, fromServer, setFromServer, subject, setSubject, showAddAccount, setShowAddAccount }) {
+function CampaignBar({ accounts, fromServer, setFromServer, addresses, subject, setSubject, showAddAccount, setShowAddAccount }) {
   const empty = subject.trim() === '';
+  const known = addresses?.[fromServer];
   return (
     <div className="campaign">
       <div className="campaign__fields">
@@ -461,16 +490,17 @@ function CampaignBar({ accounts, fromServer, setFromServer, subject, setSubject,
             {accounts.length === 0 && <option value="">no account connected</option>}
             {accounts.map((a) => (
               <option key={a.server} value={a.server}>
-                {a.server}{a.authStatus === 'needs_reauth' ? ' — needs reconnecting' : ''}
+                {accountLabel(a.server, addresses)}
+                {a.authStatus === 'needs_reauth' ? ' — needs reconnecting' : ''}
               </option>
             ))}
           </select>
           <span className="field__hint">
-            {accounts.length > 1
-              ? `${accounts.length} accounts available.`
-              : accounts.length === 1
-                ? 'The only mailbox connected to this page.'
-                : 'None connected yet.'}
+            {accounts.length === 0
+              ? 'None connected yet.'
+              : known
+                ? `Sending as ${known}, via the ${fromServer} connector.`
+                : 'Gmail does not tell a page which address it is. The exact sending address appears here after the first message goes out.'}
           </span>
         </label>
 
@@ -767,7 +797,7 @@ function ConfirmStage({ recipients, greeting, skipped, subject, onBack, onConfir
 }
 
 function ReadyStage(props) {
-  const { recipients, greeting, canSend, fromServer, subject, dailyCap, setDailyCap, onSend, onBack } = props;
+  const { recipients, greeting, canSend, fromServer, subject, addresses, dailyCap, setDailyCap, onSend, onBack } = props;
   const planned = dailyCap > 0 ? Math.min(dailyCap, recipients.length) : recipients.length;
   const leftover = recipients.length - planned;
   const eta = planned * (SEND_DELAY_MS + 1500);
@@ -786,7 +816,10 @@ function ReadyStage(props) {
       <div className="found">
         <div className="found__row">
           <span className="found__k">FROM</span>
-          <span className="found__v">{fromServer || 'no account connected'}</span>
+          <span className="found__v">
+            {accountLabel(fromServer, addresses) || 'no account connected'}
+            {addresses?.[fromServer] ? '' : ' — address confirmed after the first send'}
+          </span>
         </div>
         <div className="found__row">
           <span className="found__k">SUBJECT</span>

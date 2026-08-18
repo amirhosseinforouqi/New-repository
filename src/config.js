@@ -37,6 +37,9 @@ export const RESUME_KEY = 'emailblast.run.v1';
 /** Where the operator's edited subject line is remembered between visits. */
 export const SUBJECT_KEY = 'emailblast.subject.v1';
 
+/** Sending addresses learned from sent mail, keyed by connector name. */
+export const ADDRESS_KEY = 'emailblast.addresses.v1';
+
 /** Brand palette — mirrors the email template so the tool feels like the brand. */
 export const BRAND = {
   navy: '#14243A',
